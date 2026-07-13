@@ -20,3 +20,11 @@ pipenv run pre-commit install
 ```sh
 pipenv run pre-commit run --all-files
 ```
+
+### Tests
+
+Lambda code is unit tested with [pytest](https://docs.pytest.org/). The suite runs with branch coverage and fails below 100% coverage of the Lambda source (see `pytest.ini`):
+
+```sh
+pipenv run pytest
+```

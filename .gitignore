@@ -28,3 +28,13 @@ terraform.rc
 
 # Ignore plan output files
 *.tfplan
+
+# Lambda deployment artifacts produced by scripts/package_lambdas.sh
+build/
+
+# Python / test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*

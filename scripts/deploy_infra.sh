@@ -12,6 +12,10 @@ INFRA_DIR="${SCRIPT_DIR}/../infrastructure"
 
 PLAN_FILE="tfplan"
 
+# Package the Lambda source into deployable zip artifacts before Terraform
+# runs so the artifacts exist when Terraform references them.
+"${SCRIPT_DIR}/package_lambdas.sh"
+
 cd "${INFRA_DIR}"
 
 # The S3 backend bucket name contains the AWS account ID, which the backend
