@@ -39,12 +39,13 @@ def fetch_route(route: str, api_key: str) -> bytes:
 
     Returns the raw response body as bytes so it can be archived verbatim.
     """
-    query = urllib.parse.urlencode(
-        {"rt": route, "key": api_key, "outputType": "JSON"}
-    )
+    query = urllib.parse.urlencode({"rt": route, "key": api_key, "outputType": "JSON"})
     url = f"{API_URL}?{query}"
     logger.info("Requesting train positions for route %s", route)
-    with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT) as response:
+    # B310 is suppressed below: the URL scheme is the fixed https:// API_URL
+    # constant, not user-controllable, so file:// or custom schemes cannot be
+    # requested.
+    with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT) as response:  # nosec B310
         return response.read()
 
 
@@ -72,7 +73,7 @@ def deliver_records(stream_name: str, records: list[dict]) -> int:
         # Keep only the records whose individual response carries an error.
         retry = [
             record
-            for record, result in zip(pending, response["RequestResponses"])
+            for record, result in zip(pending, response["RequestResponses"], strict=True)
             if result.get("ErrorCode")
         ]
         logger.warning(
@@ -103,12 +104,9 @@ def handler(event, context):
     fetched_at = datetime.datetime.now(datetime.timezone.utc)
 
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=len(TRAIN_ROUTES)
-    ) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(TRAIN_ROUTES)) as executor:
         future_to_route = {
-            executor.submit(fetch_route, route, api_key): route
-            for route in TRAIN_ROUTES
+            executor.submit(fetch_route, route, api_key): route for route in TRAIN_ROUTES
         }
         for future in concurrent.futures.as_completed(future_to_route):
             route = future_to_route[future]
@@ -126,9 +124,7 @@ def handler(event, context):
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
-            logger.exception(
-                "Skipping route %s: response was not valid JSON", route
-            )
+            logger.exception("Skipping route %s: response was not valid JSON", route)
             continue
         envelope = {
             "route": route,

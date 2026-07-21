@@ -6,10 +6,12 @@ name = "pypi"
 [packages]
 
 [dev-packages]
+bandit = "*"
+boto3 = "*"
 pre-commit = "*"
 pytest = "*"
 pytest-cov = "*"
-boto3 = "*"
+ruff = "*"
 
 [requires]
 python_version = "3.14"

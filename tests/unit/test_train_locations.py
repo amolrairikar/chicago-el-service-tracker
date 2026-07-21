@@ -102,10 +102,7 @@ def test_deliver_records_gives_up_after_max_attempts(firehose):
     delivered = train_locations.deliver_records("stream", records)
 
     assert delivered == 0
-    assert (
-        firehose.put_record_batch.call_count
-        == train_locations.MAX_DELIVERY_ATTEMPTS
-    )
+    assert firehose.put_record_batch.call_count == train_locations.MAX_DELIVERY_ATTEMPTS
 
 
 def test_deliver_records_stops_when_final_attempt_reports_no_error_codes(
@@ -129,10 +126,7 @@ def test_deliver_records_stops_when_final_attempt_reports_no_error_codes(
     delivered = train_locations.deliver_records("stream", records)
 
     assert delivered == 0
-    assert (
-        firehose.put_record_batch.call_count
-        == train_locations.MAX_DELIVERY_ATTEMPTS
-    )
+    assert firehose.put_record_batch.call_count == train_locations.MAX_DELIVERY_ATTEMPTS
 
 
 # --------------------------------------------------------------------------
@@ -171,9 +165,7 @@ def test_handler_streams_fetched_routes(firehose, env, monkeypatch):
     assert envelope["data"] == {"ctatt": {"route": envelope["route"]}}
 
 
-def test_handler_delivers_nothing_when_no_valid_records(
-    firehose, env, monkeypatch
-):
+def test_handler_delivers_nothing_when_no_valid_records(firehose, env, monkeypatch):
     # No route yields valid JSON, so there are no records to deliver.
     monkeypatch.setattr(
         train_locations,
