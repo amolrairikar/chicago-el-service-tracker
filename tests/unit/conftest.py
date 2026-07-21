@@ -12,10 +12,5 @@ from pathlib import Path
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
-LAMBDA_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "lambdas"
-    / "train_locations"
-)
+LAMBDA_DIR = Path(__file__).resolve().parents[2] / "src" / "lambdas" / "train_locations"
 sys.path.insert(0, str(LAMBDA_DIR))

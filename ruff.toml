@@ -1,0 +1,15 @@
+# Ruff configuration. The formatter and linter share the line length.
+line-length = 100
+
+[lint]
+# Beyond Ruff's defaults (pyflakes + a subset of pycodestyle), enable import
+# sorting (I), bugbear (B), pyupgrade (UP), comprehension (C4) and a few
+# flake8-simplify (SIM) rules to catch likely bugs and dated idioms.
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+# The formatter governs code-line width; long docstrings/URLs may exceed it.
+ignore = ["E501"]
+
+[lint.isort]
+# The Lambda modules are imported by name (they live outside a package), so
+# treat them as first-party for import grouping.
+known-first-party = ["train_locations"]
