@@ -6,6 +6,8 @@ Dashboard to track service metrics for Chicago's "El" trains.
 
 This project fetches live train location data from the CTA Train Tracker API (`lapi.transitchicago.com/api/1.0/ttpositions.aspx`) and surfaces it through a React dashboard, giving users an at-a-glance view of CTA "El" service metrics.
 
+Data flows through a medallion architecture in S3. A per-minute Lambda streams raw API responses via Kinesis Firehose to the **bronze layer** (the append-only `raw/` prefix). A second Lambda runs daily to build the **silver layer** (`silver/date=YYYY-MM-DD/<route>.parquet`): it reads the prior day's bronze partition, explodes each response into one row per train observation, drops exact duplicates, and writes typed Parquet registered in the Glue Data Catalog for Athena. See [`infrastructure/README.md`](infrastructure/README.md) for the full pipeline.
+
 ## Development
 
 Development tooling is managed with [pipenv](https://pipenv.pypa.io/). After cloning the repo, install the dev dependencies and register the git hooks:

@@ -135,6 +135,12 @@ def handler(event, context):
         records.append({"route": route, "Data": data})
 
     delivered = deliver_records(stream_name, records) if records else 0
+    logger.info(
+        "Delivered %d/%d records to Firehose stream %s",
+        delivered,
+        len(records),
+        stream_name,
+    )
 
     return {
         "statusCode": 200,

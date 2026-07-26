@@ -12,4 +12,4 @@ ignore = ["E501"]
 [lint.isort]
 # The Lambda modules are imported by name (they live outside a package), so
 # treat them as first-party for import grouping.
-known-first-party = ["train_locations"]
+known-first-party = ["silver_layer", "train_locations"]
