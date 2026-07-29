@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Packages each Lambda under src/lambdas/ into a deployable zip artifact under
-# build/lambdas/. Every subdirectory of src/lambdas/ is treated as a separate
+# Packages each Lambda under src/ into a deployable zip artifact under
+# build/lambdas/. Every subdirectory of src/ is treated as a separate
 # Lambda, and its zip is named after the directory (e.g. train_locations/ ->
 # build/lambdas/train_locations.zip).
 #
@@ -37,7 +37,7 @@ esac
 # Resolve paths relative to this script so it works from any directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SRC_DIR="${REPO_ROOT}/src/lambdas"
+SRC_DIR="${REPO_ROOT}/src"
 BUILD_DIR="${REPO_ROOT}/build/lambdas"
 STAGE_DIR="${REPO_ROOT}/build/staging"
 
