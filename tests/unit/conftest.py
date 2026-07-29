@@ -12,7 +12,7 @@ from pathlib import Path
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
-LAMBDAS_DIR = Path(__file__).resolve().parents[2] / "src" / "lambdas"
+LAMBDAS_DIR = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(LAMBDAS_DIR / "train_locations"))
 sys.path.insert(0, str(LAMBDAS_DIR / "silver_layer"))
 sys.path.insert(0, str(LAMBDAS_DIR / "gold_layer"))
