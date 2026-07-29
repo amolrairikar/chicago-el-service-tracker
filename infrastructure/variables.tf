@@ -19,3 +19,13 @@ variable "aws_sdk_pandas_layer_arn" {
   description = "ARN of the AWS-managed AWS SDK for pandas Lambda layer (pyarrow/pandas) for the silver-transform Lambda; region/arch/runtime-specific (us-east-1, x86_64, py3.13)."
   default     = "arn:aws:lambda:us-east-1:336392948345:layer:AWSSDKPandas-Python313:14"
 }
+
+# Origins allowed to fetch gold-layer objects through the CloudFront
+# distribution (Access-Control-Allow-Origin). Defaults to "*" while the React
+# dashboard's host is undecided; tighten to the dashboard's domain(s), e.g.
+# ["https://dashboard.example.com"], before production.
+variable "cors_allowed_origins" {
+  type        = list(string)
+  description = "Origins allowed by the CloudFront CORS response-headers policy (Access-Control-Allow-Origin)."
+  default     = ["*"]
+}

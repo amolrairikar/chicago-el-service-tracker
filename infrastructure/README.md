@@ -51,16 +51,43 @@ positions.
   output, so the transform is idempotent. `pyarrow`/`pandas` come from the
   AWS-managed **AWS SDK for pandas** Lambda layer (see the
   `aws_sdk_pandas_layer_arn` variable) rather than the deployment zip.
-- The silver table is registered in the **Glue Data Catalog** database
-  `cta_train_tracker` (table `silver_train_locations`) with **partition
-  projection** on `date`, so new daily partitions are queryable in Athena the
-  moment their Parquet lands — no crawler or `MSCK REPAIR`.
+- The silver layer is an internal staging layer: it is read directly from S3 by
+  the (future) gold-layer Lambda and is not registered in any query catalog.
 
 > ⚠️ **Temporary testing-phase guardrail:** an S3 lifecycle configuration on the
-> data bucket **expires objects under `raw/` and `silver/` after 5 days** (and
-> sweeps their noncurrent versions and delete markers) to keep storage cost near
-> zero during testing. Remove or raise this retention before any production use,
-> or historical bronze and silver data is silently lost after 5 days.
+> data bucket **expires objects under `raw/`, `silver/`, and `gold/` after 5 days**
+> (and sweeps their noncurrent versions and delete markers) to keep storage cost
+> near zero during testing. Remove or raise this retention before any production
+> use, or historical bronze, silver, and gold data is silently lost after 5 days.
+
+### Delivery — gold layer via CloudFront
+
+- A **CloudFront distribution** fronts the data bucket and serves the **gold
+  layer** over HTTPS on the default `*.cloudfront.net` domain
+  (`terraform output cloudfront_domain_name`). The dashboard — an Observable
+  Framework app hosted on **GitHub Pages** (see the repo root `README.md`) —
+  fetches gold objects from this domain **cross-origin**. The bucket stays fully
+  private — CloudFront reads it through an **Origin Access Control (OAC)**
+  identity, not public objects.
+- The distribution is **scoped to `gold/` only** two ways: the origin path
+  (`/gold`) means a browser request for `/routes.json` resolves to
+  `gold/routes.json` and nothing outside the prefix is reachable, and the bucket
+  policy grants the OAC `s3:GetObject` on only `gold/*` (conditioned on the
+  distribution's `AWS:SourceArn`).
+- Because the dashboard is served from a different origin (GitHub Pages), a
+  **CORS** response-headers policy lets the browser fetch gold objects. Allowed
+  origins come from the `cors_allowed_origins` variable (defaults to `*`); tighten
+  it to the Pages origin (`https://amolrairikar.github.io`) once the dashboard
+  starts fetching data.
+- Caching uses the AWS-managed **CachingOptimized** policy (long TTL). Freshness
+  after the ~24h gold refresh is meant to come from a **CloudFront invalidation**
+  issued by the (future) gold-writer, which will need
+  `cloudfront:CreateInvalidation` scoped to `cloudfront_distribution_arn`.
+
+> **Note:** the `gold/` layer and its writer do not exist yet, and the current
+> dashboard is the default Observable Framework scaffold that does not fetch gold
+> data yet — this distribution is ready to serve gold objects the moment they
+> start landing under `gold/`.
 
 Both Lambda deployment artifacts are built by `scripts/package_lambdas.sh` into
 `build/lambdas/*.zip`; `scripts/deploy_infra.sh` runs the packaging step before
@@ -74,6 +101,7 @@ targets.
 | ------------- | ------------------------------------------------------------------- |
 | `cta_api_key` | CTA Train Tracker API key, injected into the Lambda as `CTA_API_KEY`. Sensitive. |
 | `aws_sdk_pandas_layer_arn` | ARN of the AWS-managed AWS SDK for pandas Lambda layer (pyarrow/pandas) attached to the silver-transform Lambda. Region/arch/runtime-specific; defaults to a pinned us-east-1 / x86_64 / py3.13 version. |
+| `cors_allowed_origins` | Origins allowed by the gold-layer CloudFront CORS policy (`Access-Control-Allow-Origin`). List of strings; defaults to `["*"]`. |
 
 `scripts/deploy_infra.sh` runs `plan`/`apply` non-interactively, so the value
 must be supplied without a prompt. Either export it as an environment variable:

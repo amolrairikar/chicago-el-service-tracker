@@ -43,12 +43,12 @@ resource "aws_s3_bucket_public_access_block" "data" {
   restrict_public_buckets = true
 }
 
-# ⚠️ TEMPORARY — TESTING PHASE ONLY. Expire objects under raw/ (bronze) and
-# silver/ after 5 days to keep storage/cost near zero while the pipeline is
-# under test. REMOVE (or raise the retention on) this resource before any
-# real/production use, or historical bronze and silver data is silently lost
-# after 5 days. Note this also expires EXISTING raw data from the running fetch
-# Lambda, not just new silver output.
+# ⚠️ TEMPORARY — TESTING PHASE ONLY. Expire objects under raw/ (bronze),
+# silver/, and gold/ after 5 days to keep storage/cost near zero while the
+# pipeline is under test. REMOVE (or raise the retention on) this resource
+# before any real/production use, or historical bronze, silver, and gold data is
+# silently lost after 5 days. Note this also expires EXISTING raw data from the
+# running fetch Lambda, not just new silver output.
 #
 # Versioning is enabled on this bucket, so a plain `expiration` only writes a
 # delete marker over the current version while the bytes persist (and keep
@@ -96,7 +96,24 @@ resource "aws_s3_bucket_lifecycle_configuration" "data" {
     }
   }
 
-  # Sweep the delete markers the two expiration rules leave behind once every
+  rule {
+    id     = "expire-gold"
+    status = "Enabled"
+
+    filter {
+      prefix = "gold/"
+    }
+
+    expiration {
+      days = 5
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  # Sweep the delete markers the expiration rules leave behind once every
   # noncurrent version under them is gone.
   rule {
     id     = "sweep-expired-delete-markers"
@@ -380,8 +397,7 @@ resource "aws_iam_role_policy_attachment" "transform_basic_execution" {
 }
 
 # S3 access: list and read the raw/ (bronze) partition it consumes, and write
-# the silver/ output. Partition projection means the writer never touches the
-# Glue catalog, so no Glue permissions are needed here.
+# the silver/ output. That is all the role needs — no Glue or other permissions.
 data "aws_iam_policy_document" "transform_s3" {
   # ListBucket is a bucket-level action; scope it to the raw/ prefix so the
   # role can only enumerate the bronze layer.
@@ -495,138 +511,119 @@ resource "aws_lambda_permission" "allow_eventbridge_transform" {
 }
 
 # ===========================================================================
-# Glue Data Catalog: silver database + table (component = data-catalog)
+# CloudFront: gold-layer delivery (component = delivery)
 # ===========================================================================
-# Registers the silver layer so it is queryable in Athena and provides a schema
-# contract for the future gold (calculated-metrics) layer. Partition projection
-# keeps new daily partitions queryable the moment their Parquet lands — no
-# crawler, no MSCK REPAIR, and no Glue permissions for the writer.
+# CloudFront distribution that serves the gold/ layer of the data bucket to the
+# React dashboard. The distribution is scoped to gold/ two ways: the origin
+# path (/gold) means CloudFront can only ever request keys under that prefix,
+# and the bucket policy grants read on only gold/*. The bucket stays fully
+# private (public-access-block untouched) — CloudFront reads it via an Origin
+# Access Control (OAC) identity, not public objects. Uses the default
+# *.cloudfront.net domain (no custom domain / ACM cert).
 
-# Shared database: silver lives here now; the future gold table will too.
-resource "aws_glue_catalog_database" "cta" {
-  name        = "cta_train_tracker"
-  description = "CTA 'L' train tracker data catalog: curated silver (and future gold) layers."
+# OAC identity CloudFront uses to sign requests to the private S3 origin.
+resource "aws_cloudfront_origin_access_control" "gold" {
+  name                              = "chicago-el-train-tracker-oac"
+  description                       = "OAC for the gold-layer CloudFront distribution to read the private data bucket."
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
 }
 
-resource "aws_glue_catalog_table" "silver_train_locations" {
-  name          = "silver_train_locations"
-  database_name = aws_glue_catalog_database.cta.name
-  table_type    = "EXTERNAL_TABLE"
-  description   = "Curated per-train-observation silver layer for CTA 'L' live positions, deduplicated daily from the raw/bronze feed; partitioned by service date."
+# CORS headers CloudFront attaches to responses so the browser-based React
+# dashboard can fetch gold objects. Allowed origins come from the
+# cors_allowed_origins variable (defaults to "*").
+resource "aws_cloudfront_response_headers_policy" "gold_cors" {
+  name    = "chicago-el-train-tracker-cors"
+  comment = "CORS for the gold-layer distribution consumed by the React dashboard."
 
-  # Athena surfaces these column comments and the table description via
-  # DESCRIBE and information_schema, which is the metadata a text-to-SQL / AI
-  # query assistant reads to choose columns and joins. Keep them accurate.
-  parameters = {
-    "classification"                = "parquet"
-    "projection.enabled"            = "true"
-    "projection.date.type"          = "date"
-    "projection.date.format"        = "yyyy-MM-dd"
-    "projection.date.range"         = "2026-01-01,NOW"
-    "projection.date.interval"      = "1"
-    "projection.date.interval.unit" = "DAYS"
-    "storage.location.template"     = "s3://${aws_s3_bucket.data.bucket}/silver/date=$${date}"
-  }
+  cors_config {
+    access_control_allow_credentials = false
+    origin_override                  = true
 
-  partition_keys {
-    name    = "date"
-    type    = "string"
-    comment = "Service date of the observation (YYYY-MM-DD, UTC), from the Hive date= prefix; use this to prune scans."
-  }
-
-  storage_descriptor {
-    location      = "s3://${aws_s3_bucket.data.bucket}/silver/"
-    input_format  = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
-    output_format = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
-
-    ser_de_info {
-      serialization_library = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+    access_control_allow_headers {
+      items = ["*"]
     }
 
-    columns {
-      name    = "request_timestamp"
-      type    = "string"
-      comment = "Time the CTA API generated this position snapshot (America/Chicago local time, no zone offset)."
+    access_control_allow_methods {
+      items = ["GET", "HEAD", "OPTIONS"]
     }
-    columns {
-      name    = "route"
-      type    = "string"
-      comment = "CTA 'L' line code for this train: one of red, blue, brn, g, org, p, pink, y."
-    }
-    columns {
-      name    = "run_number"
-      type    = "string"
-      comment = "Run number = a vehicle paired with an operator, not a single trip; one run makes several trips (distinct trip_ids) per shift. Unique only within CTA's scheduling day (~03:00-03:00 local), so it can recur across the UTC date partition near the 3am cutover."
-    }
-    columns {
-      name    = "destination_station"
-      type    = "string"
-      comment = "Station ID (staId, 4xxxx) of the train's final destination."
-    }
-    columns {
-      name    = "destination_station_name"
-      type    = "string"
-      comment = "Human-readable destination name shown on the train (e.g. O'Hare, 95th/Dan Ryan)."
-    }
-    columns {
-      name    = "train_direction"
-      type    = "string"
-      comment = "Service direction code (1 or 5); the two running directions of the route. Not a compass bearing (see heading)."
-    }
-    columns {
-      name    = "next_station_id"
-      type    = "string"
-      comment = "Station ID (staId, 4xxxx) of the next station the train will reach; join key to a stations reference."
-    }
-    columns {
-      name    = "next_stop_id"
-      type    = "string"
-      comment = "Stop ID (stpId, 3xxxx) of the next stop -- a direction-specific platform within next_station_id."
-    }
-    columns {
-      name    = "next_station_name"
-      type    = "string"
-      comment = "Human-readable name of the next station (e.g. Irving Park)."
-    }
-    columns {
-      name    = "prediction_time"
-      type    = "string"
-      comment = "Time this specific arrival prediction was generated (Chicago local); generally differs from the snapshot time (request_timestamp)."
-    }
-    columns {
-      name    = "predicted_arrival_time"
-      type    = "string"
-      comment = "Predicted arrival time at next_station_id (Chicago local). Seconds-to-arrival = predicted_arrival_time - prediction_time."
-    }
-    columns {
-      name    = "is_approaching"
-      type    = "boolean"
-      comment = "true when the train is within approach distance of next_station_id (about to arrive)."
-    }
-    columns {
-      name    = "is_delayed"
-      type    = "boolean"
-      comment = "true when the train has not moved for several minutes and CTA flags it 'Delayed'."
-    }
-    columns {
-      name    = "flags"
-      type    = "string"
-      comment = "Reserved CTA status flags; currently unused and almost always null."
-    }
-    columns {
-      name    = "latitude"
-      type    = "double"
-      comment = "Train's current GPS latitude (WGS84 decimal degrees). Null if CTA omitted a position."
-    }
-    columns {
-      name    = "longitude"
-      type    = "double"
-      comment = "Train's current GPS longitude (WGS84 decimal degrees). Null if CTA omitted a position."
-    }
-    columns {
-      name    = "heading"
-      type    = "smallint"
-      comment = "Compass bearing of travel in degrees, 0-359 (0=N, 90=E, 180=S, 270=W). Distinct from train_direction."
+
+    access_control_allow_origins {
+      items = var.cors_allowed_origins
     }
   }
+}
+
+# The distribution itself. Serves gold/ over HTTPS with the CachingOptimized
+# managed cache policy; freshness after a gold refresh comes from an
+# invalidation issued by the (future) gold-writer, not a short TTL.
+resource "aws_cloudfront_distribution" "gold" {
+  enabled = true
+  comment = "Serves the gold/ layer of the data bucket to the React dashboard."
+
+  origin {
+    domain_name              = aws_s3_bucket.data.bucket_regional_domain_name
+    origin_id                = "gold-s3"
+    origin_access_control_id = aws_cloudfront_origin_access_control.gold.id
+    # Prepended to every request, so the distribution can only reach gold/*.
+    origin_path = "/gold"
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "gold-s3"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    # OPTIONS is allowed so CloudFront can answer CORS preflight requests.
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.gold_cors.id
+  }
+
+  # North America + Europe only — cheapest price class; the audience is local.
+  price_class = "PriceClass_100"
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  # Default *.cloudfront.net certificate; no custom domain configured.
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = {
+    component = "delivery"
+  }
+}
+
+# Bucket policy granting the distribution's OAC read access to gold/* only. The
+# AWS:SourceArn condition scopes it to this distribution, so S3 does not treat
+# the policy as public and it coexists with block_public_policy = true.
+data "aws_iam_policy_document" "data_bucket" {
+  statement {
+    sid       = "AllowCloudFrontGoldRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.data.arn}/gold/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.gold.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "data" {
+  bucket = aws_s3_bucket.data.id
+  policy = data.aws_iam_policy_document.data_bucket.json
 }
