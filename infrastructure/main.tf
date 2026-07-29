@@ -484,12 +484,14 @@ resource "aws_lambda_function" "transform_silver_train_locations" {
   ]
 }
 
-# Invoke the transform Lambda once a day at 06:00 UTC — after the prior day's
-# final Firehose buffer (15 min) has flushed to the raw/ partition.
+# Invoke the transform Lambda once a day at 01:00 UTC — after the prior UTC
+# day's final Firehose buffer (15 min) has flushed to the raw/ partition. This
+# time is DST-independent: UTC partition completion is fixed at 00:00 UTC, so
+# the 45-minute buffer clears the flush regardless of Central-time DST.
 resource "aws_cloudwatch_event_rule" "transform_schedule" {
   name                = "${local.transform_lambda_function_name}-schedule"
-  description         = "Invoke the silver-transform Lambda daily at 06:00 UTC."
-  schedule_expression = "cron(0 6 * * ? *)"
+  description         = "Invoke the silver-transform Lambda daily at 01:00 UTC."
+  schedule_expression = "cron(0 1 * * ? *)"
 
   tags = {
     component = "data-transform"
@@ -636,12 +638,12 @@ resource "aws_lambda_function" "gold_total_trains" {
   ]
 }
 
-# Invoke the gold-writer once a day at 07:00 UTC — after the silver transform's
-# 06:00 UTC run has produced the partitions a completed service day needs.
+# Invoke the gold-writer once a day at 02:00 UTC — after the silver transform's
+# 01:00 UTC run has produced the partitions a completed service day needs.
 resource "aws_cloudwatch_event_rule" "gold_schedule" {
   name                = "${local.gold_lambda_function_name}-schedule"
-  description         = "Invoke the gold total_trains Lambda daily at 07:00 UTC."
-  schedule_expression = "cron(0 7 * * ? *)"
+  description         = "Invoke the gold total_trains Lambda daily at 02:00 UTC."
+  schedule_expression = "cron(0 2 * * ? *)"
 
   tags = {
     component = "gold"

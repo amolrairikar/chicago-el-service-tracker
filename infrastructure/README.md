@@ -41,8 +41,9 @@ positions.
 
 - **Lambda** (`chicago-el-silver-layer`) runs the
   `silver_layer` source. An **EventBridge** rule invokes it once a day
-  at **06:00 UTC** (`cron(0 6 * * ? *)`), after the prior day's final Firehose
-  buffer has flushed.
+  at **01:00 UTC** (`cron(0 1 * * ? *)`), after the prior UTC day's final Firehose
+  buffer has flushed. The time is DST-independent — UTC partition completion is
+  fixed at 00:00 UTC, so the buffer holds year-round.
 - It reads the previous UTC day's `raw/` (bronze) partition, explodes the nested
   `ctatt.route[].train[]` arrays into one row per train observation, drops exact
   duplicates (SHA-256 of the raw train dict plus route), and writes typed,

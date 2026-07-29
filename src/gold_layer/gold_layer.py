@@ -70,7 +70,7 @@ def resolve_service_date(event):
 
     Defaults to two UTC days ago: a service day's later half lands in the *next*
     UTC silver partition, which the silver transform only writes the following
-    06:00 UTC, so the newest fully-available service day is ~2 UTC days back. An
+    01:00 UTC, so the newest fully-available service day is ~2 UTC days back. An
     ``event["service_date"]`` override (``YYYY-MM-DD``) lets a backfill target an
     arbitrary day.
     """
