@@ -6,6 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 - When a new pre-commit check is added to `.pre-commit-config.yaml`, update the **Development** section of `README.md` to document the new check (what it does and, if relevant, how to run it).
 - Keep the package lists in `Pipfile` (`[packages]` and `[dev-packages]`) alphabetized when adding or removing dependencies.
+- When opening a pull request, the PR body MUST follow `.github/PULL_REQUEST_TEMPLATE.md`: keep its section headings (`## Description`, `## Type of change`), fill in the description, and check the applicable "Type of change" boxes.
 
 ## Lambda functions
 

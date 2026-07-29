@@ -33,10 +33,10 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client("s3")
 
-# Explicit output schema. The types are a contract the Glue Data Catalog and the
-# future gold layer query against, so they are committed here rather than left as
-# raw strings. Timestamps stay as ISO-8601 strings; numeric/boolean fields are
-# typed, with parse failures falling back to null.
+# Explicit output schema. The types are a contract the future gold layer reads
+# against, so they are committed here rather than left as raw strings. Timestamps
+# stay as ISO-8601 strings; numeric/boolean fields are typed, with parse failures
+# falling back to null.
 SCHEMA = pa.schema(
     [
         pa.field("request_timestamp", pa.string()),
