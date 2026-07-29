@@ -511,6 +511,158 @@ resource "aws_lambda_permission" "allow_eventbridge_transform" {
 }
 
 # ===========================================================================
+# Gold total_trains Lambda + EventBridge schedule (component = gold)
+# ===========================================================================
+# The daily gold-writer that reads the silver/ Parquet covering a Central
+# service day, counts distinct run numbers per line, and publishes the
+# total_trains JSON (daily + weekly/monthly/yearly rollups) to gold/. It then
+# invalidates the CloudFront distribution so the dashboard sees the refresh.
+# Its IAM role, log group, and the EventBridge schedule that invokes it daily.
+
+locals {
+  gold_lambda_function_name = "chicago-el-gold-layer"
+  gold_lambda_zip           = "${path.module}/../build/lambdas/gold_layer.zip"
+}
+
+resource "aws_iam_role" "gold" {
+  name               = "${local.gold_lambda_function_name}-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+
+  tags = {
+    component = "gold"
+  }
+}
+
+# CloudWatch Logs write access for the function.
+resource "aws_iam_role_policy_attachment" "gold_basic_execution" {
+  role       = aws_iam_role.gold.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Access: list/read the silver/ input, read+write the gold/ output (it reads
+# back its own daily fact to accumulate history), and invalidate the gold
+# distribution's cache after each refresh.
+data "aws_iam_policy_document" "gold_s3" {
+  # ListBucket is a bucket-level action; scope it to the two prefixes the
+  # function enumerates.
+  statement {
+    sid       = "ListSilverAndGold"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.data.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["silver/*", "gold/*"]
+    }
+  }
+
+  statement {
+    sid       = "ReadSilver"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.data.arn}/silver/*"]
+  }
+
+  statement {
+    sid       = "ReadWriteGold"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.data.arn}/gold/*"]
+  }
+
+  statement {
+    sid       = "InvalidateGoldDistribution"
+    effect    = "Allow"
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = [aws_cloudfront_distribution.gold.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "gold_s3" {
+  name   = "${local.gold_lambda_function_name}-access"
+  role   = aws_iam_role.gold.id
+  policy = data.aws_iam_policy_document.gold_s3.json
+}
+
+# Declare the log group explicitly so its retention is managed (Lambda would
+# otherwise create it lazily with never-expire retention).
+resource "aws_cloudwatch_log_group" "gold" {
+  name              = "/aws/lambda/${local.gold_lambda_function_name}"
+  retention_in_days = 14
+
+  tags = {
+    component = "gold"
+  }
+}
+
+resource "aws_lambda_function" "gold_total_trains" {
+  function_name = local.gold_lambda_function_name
+  role          = aws_iam_role.gold.arn
+
+  # Runtime targets must match scripts/package_lambdas.sh (x86_64 / py3.13).
+  runtime       = "python3.13"
+  architectures = ["x86_64"]
+  handler       = "gold_layer.handler"
+
+  filename         = local.gold_lambda_zip
+  source_code_hash = filebase64sha256(local.gold_lambda_zip)
+
+  # Reads up to two full days of silver Parquet; give it headroom in both time
+  # and memory for the pyarrow reads.
+  timeout     = 300
+  memory_size = 1024
+
+  # pyarrow comes from the AWS-managed layer rather than the deployment zip (its
+  # Linux wheel would push the zip past the direct-upload size limit).
+  layers = [var.aws_sdk_pandas_layer_arn]
+
+  environment {
+    variables = {
+      DATA_BUCKET                = aws_s3_bucket.data.bucket
+      CLOUDFRONT_DISTRIBUTION_ID = aws_cloudfront_distribution.gold.id
+    }
+  }
+
+  tags = {
+    component = "gold"
+  }
+
+  # Ensure the log group's retention is in place before the function can log.
+  depends_on = [
+    aws_cloudwatch_log_group.gold,
+    aws_iam_role_policy_attachment.gold_basic_execution,
+  ]
+}
+
+# Invoke the gold-writer once a day at 07:00 UTC — after the silver transform's
+# 06:00 UTC run has produced the partitions a completed service day needs.
+resource "aws_cloudwatch_event_rule" "gold_schedule" {
+  name                = "${local.gold_lambda_function_name}-schedule"
+  description         = "Invoke the gold total_trains Lambda daily at 07:00 UTC."
+  schedule_expression = "cron(0 7 * * ? *)"
+
+  tags = {
+    component = "gold"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "gold" {
+  rule      = aws_cloudwatch_event_rule.gold_schedule.name
+  target_id = "gold-total-trains-lambda"
+  arn       = aws_lambda_function.gold_total_trains.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_gold" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.gold_total_trains.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.gold_schedule.arn
+}
+
+# ===========================================================================
 # CloudFront: gold-layer delivery (component = delivery)
 # ===========================================================================
 # CloudFront distribution that serves the gold/ layer of the data bucket to the
